@@ -43,7 +43,6 @@ import im.turms.server.common.rpc.request.SetUserOfflineRequest;
 import im.turms.server.common.rpc.service.ISessionService;
 import im.turms.server.common.service.session.SessionLocationService;
 import im.turms.server.common.service.session.UserStatusService;
-import im.turms.server.common.throttle.TokenBucketContext;
 import im.turms.server.common.util.AssertUtil;
 import im.turms.server.common.util.DeviceTypeUtil;
 import im.turms.server.common.util.MapUtil;
@@ -89,12 +88,6 @@ public class SessionService implements ISessionService {
     private final boolean pluginEnabled;
     private int closeIdleSessionAfterSeconds;
 
-    /**
-     * Share the context with all instances of token buckets
-     * so that we can apply new properties easily
-     */
-    private final TokenBucketContext requestTokenBucketContext;
-
     private final Map<Long, UserSessionsManager> sessionsManagerByUserId;
     private final Map<byte[], UserSession> sessionByIp;
 
@@ -119,11 +112,8 @@ public class SessionService implements ISessionService {
         sessionByIp = new ConcurrentHashMap<>(4096);
         pluginEnabled = turmsProperties.getPlugin().isEnabled();
 
-        GatewayProperties gatewayProperties = turmsProperties.getGateway();
-        SessionProperties sessionProperties = gatewayProperties.getSession();
+        SessionProperties sessionProperties = turmsProperties.getGateway().getSession();
         closeIdleSessionAfterSeconds = sessionProperties.getCloseIdleSessionAfterSeconds();
-
-        requestTokenBucketContext = new TokenBucketContext(gatewayProperties.getClientApi().getRateLimiting());
 
         heartbeatManager = new HeartbeatManager(this,
                 userStatusService,
@@ -141,8 +131,6 @@ public class SessionService implements ISessionService {
             heartbeatManager.setCloseIdleSessionAfterSeconds(newSessionProperties.getCloseIdleSessionAfterSeconds());
             heartbeatManager.setMinHeartbeatIntervalMillis(newSessionProperties.getMinHeartbeatIntervalSeconds() * 1000);
             heartbeatManager.setSwitchProtocolAfterMillis(newSessionProperties.getSwitchProtocolAfterSeconds() * 1000);
-
-            requestTokenBucketContext.updateRequestTokenBucket(newGatewayProperties.getClientApi().getRateLimiting());
         });
 
         MeterRegistry registry = metricsService.getRegistry();
@@ -476,7 +464,7 @@ public class SessionService implements ISessionService {
                     UserStatus finalUserStatus = null == userStatus ? UserStatus.AVAILABLE : userStatus;
                     UserSessionsManager manager =
                             sessionsManagerByUserId.computeIfAbsent(userId, key ->
-                                    new UserSessionsManager(key, finalUserStatus, requestTokenBucketContext));
+                                    new UserSessionsManager(key, finalUserStatus));
                     UserSession session = manager.addSessionIfAbsent(version, deviceType, position);
                     // This should never happen
                     if (null == session) {

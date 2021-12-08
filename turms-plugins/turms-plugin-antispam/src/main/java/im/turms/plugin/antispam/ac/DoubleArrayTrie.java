@@ -62,7 +62,7 @@ public class DoubleArrayTrie {
         if (size == 0) {
             return;
         }
-        resize(1 << 16);
+        ensureSize(1 << 16);
         // For the root state
         base[0] = 1;
         List<NodeEntry> siblings = new ArrayList<>(size);

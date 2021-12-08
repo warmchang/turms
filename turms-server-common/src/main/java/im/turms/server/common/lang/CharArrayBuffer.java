@@ -134,4 +134,6 @@ public class CharArrayBuffer implements CharSequence {
         return new String(buffer, beginIndex, endIndex - beginIndex);
     }
 
+    public void clear() {}
+
 }

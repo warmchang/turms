@@ -72,10 +72,6 @@ public final class UserSession {
     // (the thread "heartbeat-update" in HeartbeatManager)
     private long lastHeartbeatUpdateTimestampMillis;
 
-    /**
-     * Rate limiting
-     */
-    private final TokenBucket requestTokenBucket;
 
     /**
      * Note that it's acceptable that the session is still open even if the connection is closed
@@ -94,8 +90,7 @@ public final class UserSession {
     public UserSession(int version,
                        Long userId,
                        DeviceType loggingInDeviceType,
-                       @Nullable Point loginLocation,
-                       TokenBucketContext tokenBucketContext) {
+                       @Nullable Point loginLocation) {
         Date now = new Date();
         this.version = version;
         this.userId = userId;
@@ -103,7 +98,6 @@ public final class UserSession {
         this.loginDate = now;
         this.loginLocation = loginLocation;
         this.lastHeartbeatRequestTimestampMillis = now.getTime();
-        requestTokenBucket = new TokenBucket(tokenBucketContext);
     }
 
     /**
@@ -149,10 +143,6 @@ public final class UserSession {
     public void sendNotification(ByteBuf byteBuf, TracingContext tracingContext) {
         // Note that we do not check if the consumer is null
         notificationConsumer.accept(byteBuf, tracingContext);
-    }
-
-    public boolean tryAcquireToken(long time) {
-        return requestTokenBucket.tryAcquire(time);
     }
 
     public boolean acquireDeleteSessionRequestLoggingLock() {

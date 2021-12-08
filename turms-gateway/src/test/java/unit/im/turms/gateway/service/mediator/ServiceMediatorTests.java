@@ -34,7 +34,6 @@ import im.turms.server.common.dto.ServiceRequest;
 import im.turms.server.common.property.TurmsProperties;
 import im.turms.server.common.property.env.gateway.GatewayProperties;
 import im.turms.server.common.property.env.gateway.SessionProperties;
-import im.turms.server.common.throttle.TokenBucketContext;
 import im.turms.server.common.util.ExceptionUtil;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -117,9 +116,7 @@ class ServiceMediatorTests {
         ServiceMediator mediator = newServiceMediator(true, true, true, false);
         Mono<UserSession> result = mediator.processLoginRequest(version, ip, userId, null, deviceType, null, null, null, null);
 
-        StepVerifier.create(result)
-                .expectNextCount(1)
-                .verifyComplete();
+        StepVerifier.create(result).expectNextCount(1).verifyComplete();
     }
 
     @Test
@@ -127,9 +124,7 @@ class ServiceMediatorTests {
         ServiceMediator mediator = newServiceMediator();
         Mono<Boolean> result = mediator.setLocalUserDeviceOffline(userId, deviceType, SessionCloseStatus.SERVER_ERROR);
 
-        StepVerifier.create(result)
-                .expectNext(true)
-                .verifyComplete();
+        StepVerifier.create(result).expectNext(true).verifyComplete();
     }
 
     /**
@@ -140,12 +135,10 @@ class ServiceMediatorTests {
     void onSessionEstablished_shouldSendSessionNotification_ifIsNotifyClientsOfSessionInfoAfterConnected() {
         ServiceMediator mediator = newServiceMediator();
         UserSessionsManager manager = mock(UserSessionsManager.class);
-        when(manager.pushSessionNotification(any(), any()))
-                .thenReturn(true);
+        when(manager.pushSessionNotification(any(), any())).thenReturn(true);
         mediator.onSessionEstablished(manager, deviceType);
 
-        boolean sessionExists = verify(manager, times(1))
-                .pushSessionNotification(eq(deviceType), any());
+        boolean sessionExists = verify(manager, times(1)).pushSessionNotification(eq(deviceType), any());
         assertThat(sessionExists).isTrue();
     }
 
@@ -155,15 +148,13 @@ class ServiceMediatorTests {
         ServiceRequest request = mock(ServiceRequest.class);
         Mono<TurmsNotification> result = mediator.processServiceRequest(request);
 
-        StepVerifier.create(result)
-                .verifyComplete();
+        StepVerifier.create(result).verifyComplete();
     }
 
     @Test
     void processHeartbeatRequest_shouldSucceed() {
         ServiceMediator mediator = newServiceMediator();
-        assertThatNoException().isThrownBy(() ->
-                mediator.processHeartbeatRequest(new UserSession(version, userId, deviceType, null, new TokenBucketContext())));
+        assertThatNoException().isThrownBy(() -> mediator.processHeartbeatRequest(new UserSession(version, userId, deviceType, null)));
     }
 
     @Test
@@ -173,30 +164,20 @@ class ServiceMediatorTests {
         UserSession session = mock(UserSession.class);
         Mono<Void> result = mediator.triggerGoOnlinePlugins(manager, session);
 
-        StepVerifier.create(result)
-                .verifyComplete();
+        StepVerifier.create(result).verifyComplete();
     }
 
     private ServiceMediator newServiceMediator() {
         return newServiceMediator(true, true, true, false);
     }
 
-    private ServiceMediator newServiceMediator(
-            boolean enableAuthentication,
-            boolean isActiveAndNotDeleted,
-            boolean isAuthenticated,
-            boolean isForbiddenDeviceType) {
+    private ServiceMediator newServiceMediator(boolean enableAuthentication, boolean isActiveAndNotDeleted, boolean isAuthenticated,
+                                               boolean isForbiddenDeviceType) {
         Node node = mock(Node.class);
-        TurmsProperties properties = new TurmsProperties().toBuilder()
-                .gateway(new GatewayProperties().toBuilder()
-                        .session(new SessionProperties().toBuilder()
-                                .notifyClientsOfSessionInfoAfterConnected(true)
-                                .enableAuthentication(enableAuthentication)
-                                .build())
-                        .build())
-                .build();
-        when(node.getSharedProperties())
-                .thenReturn(properties);
+        TurmsProperties properties = new TurmsProperties().toBuilder().gateway(new GatewayProperties().toBuilder().session(
+                new SessionProperties().toBuilder().notifyClientsOfSessionInfoAfterConnected(true)
+                        .enableAuthentication(enableAuthentication).build()).build()).build();
+        when(node.getSharedProperties()).thenReturn(properties);
 
         TurmsPluginManager pluginManager = mock(TurmsPluginManager.class);
         when(pluginManager.isEnabled()).thenReturn(true);
@@ -209,18 +190,14 @@ class ServiceMediatorTests {
 
         SessionService sessionService = mock(SessionService.class);
         UserSession userSession = mock(UserSession.class);
-        when(sessionService.tryRegisterOnlineUser(anyInt(), any(), any(), any(), any(), any()))
-                .thenReturn(Mono.just(userSession));
-        when(sessionService.setLocalSessionOfflineByUserIdAndDeviceType(any(), any(), any()))
-                .thenReturn(Mono.just(true));
+        when(sessionService.tryRegisterOnlineUser(anyInt(), any(), any(), any(), any(), any())).thenReturn(Mono.just(userSession));
+        when(sessionService.setLocalSessionOfflineByUserIdAndDeviceType(any(), any(), any())).thenReturn(Mono.just(true));
 
         UserSimultaneousLoginService userSimultaneousLoginService = mock(UserSimultaneousLoginService.class);
-        when(userSimultaneousLoginService.isForbiddenDeviceType(any()))
-                .thenReturn(isForbiddenDeviceType);
+        when(userSimultaneousLoginService.isForbiddenDeviceType(any())).thenReturn(isForbiddenDeviceType);
 
         InboundRequestService inboundRequestService = mock(InboundRequestService.class);
-        when(inboundRequestService.processServiceRequest(any()))
-                .thenReturn(Mono.empty());
+        when(inboundRequestService.processServiceRequest(any())).thenReturn(Mono.empty());
         return new ServiceMediator(node, pluginManager, userService, sessionService, userSimultaneousLoginService, inboundRequestService);
     }
 

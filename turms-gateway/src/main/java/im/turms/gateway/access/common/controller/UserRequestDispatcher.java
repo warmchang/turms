@@ -29,6 +29,7 @@ import im.turms.gateway.pojo.bo.session.UserSession;
 import im.turms.gateway.pojo.dto.SimpleTurmsRequest;
 import im.turms.gateway.pojo.parser.TurmsRequestParser;
 import im.turms.gateway.service.mediator.ServiceMediator;
+import im.turms.server.common.cluster.node.Node;
 import im.turms.server.common.constant.TurmsStatusCode;
 import im.turms.server.common.dto.ServiceRequest;
 import im.turms.server.common.exception.ThrowableInfo;
@@ -37,6 +38,8 @@ import im.turms.server.common.factory.NotificationFactory;
 import im.turms.server.common.healthcheck.ServerStatusManager;
 import im.turms.server.common.logging.RequestLoggingContext;
 import im.turms.server.common.service.blocklist.BlocklistService;
+import im.turms.server.common.throttle.TokenBucket;
+import im.turms.server.common.throttle.TokenBucketContext;
 import im.turms.server.common.tracing.TracingCloseableContext;
 import im.turms.server.common.tracing.TracingContext;
 import im.turms.server.common.util.ProtoUtil;
@@ -47,6 +50,9 @@ import io.netty.buffer.UnpooledByteBufAllocator;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static im.turms.common.model.dto.request.TurmsRequest.KindCase.CREATE_SESSION_REQUEST;
 import static im.turms.common.model.dto.request.TurmsRequest.KindCase.DELETE_SESSION_REQUEST;
@@ -79,13 +85,23 @@ public class UserRequestDispatcher {
 
     private final ApiLoggingContext apiLoggingContext;
 
+
+    /**
+     * Share the context with all instances of token buckets
+     * so that we can apply new properties easily
+     */
+    private final TokenBucketContext requestTokenBucketContext;
+
     private final BlocklistService blocklistService;
 
     private final SessionController sessionController;
     private final ServiceMediator serviceMediator;
     private final ServerStatusManager serverStatusManager;
 
-    public UserRequestDispatcher(ApiLoggingContext apiLoggingContext,
+    private final Map<String, TokenBucket> ipRequestTokenBucketMap = new ConcurrentHashMap<>(256);
+
+    public UserRequestDispatcher(Node node,
+                                 ApiLoggingContext apiLoggingContext,
                                  BlocklistService blocklistService,
                                  SessionController sessionController,
                                  ServiceMediator serviceMediator,
@@ -95,6 +111,12 @@ public class UserRequestDispatcher {
         this.sessionController = sessionController;
         this.serviceMediator = serviceMediator;
         this.serverStatusManager = serverStatusManager;
+
+        requestTokenBucketContext = new TokenBucketContext(gatewayProperties.getClientApi().getRateLimiting());
+
+        node.addPropertiesChangeListener(newProperties -> {
+            requestTokenBucketContext.updateRequestTokenBucket(newGatewayProperties.getClientApi().getRateLimiting());
+        });
     }
 
     /**
