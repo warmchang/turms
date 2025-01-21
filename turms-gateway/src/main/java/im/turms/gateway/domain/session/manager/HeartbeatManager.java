@@ -22,7 +22,6 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import jakarta.annotation.Nullable;
 
 import io.lettuce.core.protocol.LongKeyGenerator;
 import lombok.Setter;
@@ -39,6 +38,7 @@ import im.turms.server.common.infra.exception.ThrowableUtil;
 import im.turms.server.common.infra.logging.core.logger.Logger;
 import im.turms.server.common.infra.logging.core.logger.LoggerFactory;
 import im.turms.server.common.infra.thread.TurmsThread;
+import im.turms.server.common.infra.time.DateTimeUtil;
 import im.turms.server.common.infra.time.DurationConst;
 
 /**
@@ -70,12 +70,12 @@ public class HeartbeatManager {
     private final Map<Long, UserSessionsManager> userIdToSessionsManager;
     private final TurmsThread workerThread;
     private int closeIdleSessionAfterSeconds;
-    private int closeIdleSessionAfterMillis;
+    private long closeIdleSessionAfterNanos;
     private int expectedFractionPerSecond;
     @Setter
-    private int minHeartbeatIntervalMillis;
+    private long minHeartbeatIntervalNanos;
     @Setter
-    private int switchProtocolAfterMillis;
+    private long switchProtocolAfterNanos;
 
     public HeartbeatManager(
             SessionService sessionService,
@@ -90,8 +90,8 @@ public class HeartbeatManager {
         this.userIdToSessionsManager = userIdToSessionsManager;
         setClientHeartbeatIntervalSeconds(clientHeartbeatIntervalSeconds);
         setCloseIdleSessionAfterSeconds(closeIdleSessionAfterSeconds);
-        this.minHeartbeatIntervalMillis = minHeartbeatIntervalSeconds * 1000;
-        this.switchProtocolAfterMillis = switchProtocolAfterSeconds * 1000;
+        this.minHeartbeatIntervalNanos = DateTimeUtil.secondsToNanos(minHeartbeatIntervalSeconds);
+        this.switchProtocolAfterNanos = DateTimeUtil.secondsToNanos(switchProtocolAfterSeconds);
         workerThread = TurmsThread.create(ThreadNameConst.CLIENT_HEARTBEAT_REFRESHER, true, () -> {
             Thread thread = Thread.currentThread();
             while (!thread.isInterrupted()) {
@@ -115,7 +115,7 @@ public class HeartbeatManager {
 
     public void setCloseIdleSessionAfterSeconds(int closeIdleSessionAfterSeconds) {
         this.closeIdleSessionAfterSeconds = closeIdleSessionAfterSeconds;
-        closeIdleSessionAfterMillis = closeIdleSessionAfterSeconds * 1000;
+        closeIdleSessionAfterNanos = DateTimeUtil.secondsToNanos(closeIdleSessionAfterSeconds);
     }
 
     public void setClientHeartbeatIntervalSeconds(int clientHeartbeatIntervalSeconds) {
@@ -167,7 +167,7 @@ public class HeartbeatManager {
                 * onlineUserCount / expectedFractionPerSecond);
         Iterator<UserSessionsManager> iterator = managers.iterator();
         return new LongKeyGenerator() {
-            final long now = System.currentTimeMillis();
+            final long now = System.nanoTime();
 
             @Override
             public int estimatedSize() {
@@ -181,9 +181,8 @@ public class HeartbeatManager {
                     for (UserSession session : iterator.next()
                             .getDeviceTypeToSession()
                             .values()) {
-                        Long currentUserId = closeOrUpdateSession(session, now);
-                        if (currentUserId != null && userId == null) {
-                            userId = currentUserId;
+                        if (closeOrUpdateSession(session, now) && userId == null) {
+                            userId = session.getUserId();
                         }
                     }
                     if (userId != null) {
@@ -195,39 +194,28 @@ public class HeartbeatManager {
         };
     }
 
-    @Nullable
-    private Long closeOrUpdateSession(UserSession session, long now) {
+    /**
+     * @return If true, the data in Redis should be updated.
+     */
+    private boolean closeOrUpdateSession(UserSession session, long nowNanos) {
         if (!session.isOpen()) {
-            return null;
+            return false;
         }
+        // 1. Check whether to switch to UDP
         if (UdpRequestDispatcher.isEnabled()
                 && session.supportsSwitchingToUdp()
-                && session.isConnected()) {
-            int requestElapsedTime = (int) (now - session.getLastRequestTimestampMillis());
-            if (requestElapsedTime > switchProtocolAfterMillis) {
-                session.getConnection()
-                        .switchToUdp();
-                return null;
-            }
+                && session.isConnected()
+                && nowNanos - session.getLastRequestTimestampNanos() > switchProtocolAfterNanos) {
+            session.getConnection()
+                    .switchToUdp();
+            return false;
         }
-        // Limit the frequency of sending heartbeat requests to Redis
-        long lastHeartbeatUpdateTimestamp = session.getLastHeartbeatUpdateTimestampMillis();
-        int localMinHeartbeatIntervalMillis = minHeartbeatIntervalMillis;
-        if (localMinHeartbeatIntervalMillis > 0
-                && now - lastHeartbeatUpdateTimestamp < localMinHeartbeatIntervalMillis) {
-            return null;
-        }
-        // Only sends heartbeat requests to Redis if the client has
-        // sent any request to the local node after the last heartbeat update request
-        long lastHeartbeatRequestTimestamp =
-                Math.max(session.getLastHeartbeatRequestTimestampMillis(),
-                        session.getLastRequestTimestampMillis());
-        if (lastHeartbeatRequestTimestamp <= lastHeartbeatUpdateTimestamp) {
-            return null;
-        }
-        int localCloseIdleSessionAfterMillis = closeIdleSessionAfterMillis;
-        if (localCloseIdleSessionAfterMillis > 0
-                && (int) (now - lastHeartbeatRequestTimestamp) > localCloseIdleSessionAfterMillis) {
+        long lastRequestTimestampNanos = Math.max(session.getLastHeartbeatRequestTimestampNanos(),
+                session.getLastRequestTimestampNanos());
+        long localCloseIdleSessionAfterNanos = closeIdleSessionAfterNanos;
+        // 2. Check whether to close the session
+        if (localCloseIdleSessionAfterNanos > 0
+                && nowNanos - lastRequestTimestampNanos > localCloseIdleSessionAfterNanos) {
             sessionService
                     .closeLocalSession(session.getUserId(),
                             session.getDeviceType(),
@@ -236,10 +224,25 @@ public class HeartbeatManager {
                             t -> LOGGER.error(
                                     "Caught an error while closing the local user session ({}) with the close reason: {}",
                                     session,
-                                    HEARTBEAT_TIMEOUT));
-            return null;
+                                    HEARTBEAT_TIMEOUT,
+                                    t));
+            return false;
         }
-        session.setLastHeartbeatUpdateTimestampMillis(now);
-        return session.getUserId();
+
+        // 3. Check whether to update session data in Redis
+        // Limit the frequency of sending heartbeat requests to Redis
+        long lastHeartbeatUpdateTimestampNanos = session.getLastHeartbeatUpdateTimestampNanos();
+        long localMinHeartbeatIntervalNanos = minHeartbeatIntervalNanos;
+        if (localMinHeartbeatIntervalNanos > 0
+                && nowNanos - lastHeartbeatUpdateTimestampNanos < localMinHeartbeatIntervalNanos) {
+            return false;
+        }
+        // Only update session data in Redis if the client has
+        // sent any request to the local node after the last heartbeat update request
+        if (lastRequestTimestampNanos <= lastHeartbeatUpdateTimestampNanos) {
+            return false;
+        }
+        session.setLastHeartbeatUpdateTimestampNanos(nowNanos);
+        return true;
     }
 }

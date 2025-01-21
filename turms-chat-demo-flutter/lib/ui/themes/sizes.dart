@@ -8,6 +8,8 @@ import '../desktop/components/t_list_tile/t_list_tile.dart';
 class Sizes {
   const Sizes._();
 
+  static const unit = 2;
+
   // Space
   static const paddingH1 = EdgeInsets.symmetric(horizontal: 1);
   static const paddingV2 = EdgeInsets.symmetric(vertical: 2);
@@ -58,6 +60,7 @@ class Sizes {
   static const dateRangePickerHeight = 312.0;
 
   // Application
+
   static const mainNavigationRailWidth = 56.0;
   static const subNavigationRailWidth = 248.0;
   static const subNavigationRailMinWidth = 240.0;
@@ -79,11 +82,16 @@ class Sizes {
   static const stickerPickerWidth = 460.0;
   static const stickerPickerHeight = 460.0;
 
+  static const chatSessionPaneFooterHeight = 240.0;
+  static const chatSessionPaneFooterMinHeight = 128.0;
+  static const chatSessionPaneFooterMaxHeight = 512.0;
+  static const chatSessionDetailsDrawerWidth = subNavigationRailWidth;
+
   static const chatHistoryDialogWidth = 696.0;
   static const chatHistoryDialogHeight = 640.0;
 
   static const userProfileImageDialogWidth = 520.0;
-  static const userProfileImageDialogHeight = 440.0;
+  static const userProfileImageDialogHeight = 388.0;
 
   static const friendRequestDialogWidth = 400.0;
   static const friendRequestDialogHeight = 300.0;
